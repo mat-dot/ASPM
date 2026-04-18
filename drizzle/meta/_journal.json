@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1776542173437,
+      "tag": "0000_round_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1776542746674,
+      "tag": "0001_stiff_venus",
+      "breakpoints": true
+    }
+  ]
+}
