@@ -15,6 +15,20 @@
       "when": 1776542746674,
       "tag": "0001_stiff_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1776563176955,
+      "tag": "0002_daily_fantastic_four",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1776563211385,
+      "tag": "0003_fixed_glorian",
+      "breakpoints": true
     }
   ]
 }

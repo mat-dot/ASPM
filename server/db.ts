@@ -1,18 +1,28 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { 
-  InsertUser, users,
-  InsertApplication, applications,
-  InsertVulnerability, vulnerabilities,
-  InsertComplianceControl, complianceControls,
-  InsertApplicationCompliance, applicationCompliance,
-  InsertActivityLog, activityLog
+import {
+  users,
+  projects,
+  discoveredAssets,
+  scannerConfigs,
+  scanRuns,
+  vulnerabilities,
+  sensitiveDataDetections,
+  promptInjectionDetections,
+  aiAnalyses,
+  activityLogs,
+  InsertProject,
+  InsertVulnerability,
+  InsertScanRun,
+  InsertSensitiveDataDetection,
+  InsertPromptInjectionDetection,
+  InsertAiAnalysis,
+  InsertActivityLog,
 } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -25,7 +35,9 @@ export async function getDb() {
   return _db;
 }
 
-export async function upsertUser(user: InsertUser): Promise<void> {
+// ============ USERS ============
+
+export async function upsertUser(user: typeof users.$inferInsert): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");
   }
@@ -37,10 +49,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
 
   try {
-    const values: InsertUser = {
+    const values: any = {
       openId: user.openId,
     };
-    const updateSet: Record<string, unknown> = {};
+    const updateSet: Record<string, any> = {};
 
     const textFields = ["name", "email", "loginMethod"] as const;
     type TextField = (typeof textFields)[number];
@@ -62,9 +74,6 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
     }
 
     if (!values.lastSignedIn) {
@@ -91,129 +100,267 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
 }
 
-// Aplicações
-export async function getApplications() {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(applications);
-}
+// ============ PROJECTS ============
 
-export async function getApplicationById(id: number) {
+export async function getProjectById(projectId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(applications).where(eq(applications.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  const result = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  return result[0];
 }
 
-export async function createApplication(data: InsertApplication) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(applications).values(data);
-}
-
-export async function updateApplication(id: number, data: Partial<InsertApplication>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(applications).set(data).where(eq(applications.id, id));
-}
-
-// Vulnerabilidades
-export async function getVulnerabilities(applicationId?: number) {
+export async function listProjects() {
   const db = await getDb();
   if (!db) return [];
-  if (applicationId) {
-    return db.select().from(vulnerabilities).where(eq(vulnerabilities.applicationId, applicationId));
+  return await db.select().from(projects).orderBy(desc(projects.createdAt));
+}
+
+export async function createProject(data: InsertProject) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(projects).values(data);
+  return result;
+}
+
+export async function updateProjectRiskScore(projectId: number, riskScore: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(projects).set({ riskScore: riskScore as any }).where(eq(projects.id, projectId));
+}
+
+// ============ DISCOVERED ASSETS ============
+
+export async function listAssetsByProject(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(discoveredAssets)
+    .where(eq(discoveredAssets.projectId, projectId))
+    .orderBy(desc(discoveredAssets.createdAt));
+}
+
+export async function createDiscoveredAsset(data: typeof discoveredAssets.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(discoveredAssets).values(data);
+}
+
+// ============ SCANNER CONFIGS ============
+
+export async function listScannerConfigs(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(scannerConfigs)
+    .where(eq(scannerConfigs.projectId, projectId));
+}
+
+export async function createScannerConfig(data: typeof scannerConfigs.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(scannerConfigs).values(data);
+}
+
+// ============ SCAN RUNS (Pipeline SDLC) ============
+
+export async function createScanRun(data: InsertScanRun) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(scanRuns).values(data);
+  return result;
+}
+
+export async function getScanRunById(scanRunId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(scanRuns).where(eq(scanRuns.id, scanRunId)).limit(1);
+  return result[0];
+}
+
+export async function listScanRunsByProject(projectId: number, limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(scanRuns)
+    .where(eq(scanRuns.projectId, projectId))
+    .orderBy(desc(scanRuns.createdAt))
+    .limit(limit);
+}
+
+export async function updateScanRunStatus(scanRunId: number, status: string, completedAt?: Date) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: any = { status: status as any };
+  if (completedAt) {
+    updateData.completedAt = completedAt;
+    const startTime = new Date();
+    updateData.duration = Math.floor((completedAt.getTime() - startTime.getTime()) / 1000);
   }
-  return db.select().from(vulnerabilities);
+  await db.update(scanRuns).set(updateData).where(eq(scanRuns.id, scanRunId));
 }
 
-export async function getVulnerabilityById(id: number) {
+// ============ VULNERABILITIES ============
+
+export async function listVulnerabilitiesByProject(projectId: number) {
   const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(vulnerabilities).where(eq(vulnerabilities.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  if (!db) return [];
+  return await db
+    .select()
+    .from(vulnerabilities)
+    .where(eq(vulnerabilities.projectId, projectId))
+    .orderBy(desc(vulnerabilities.riskPriority));
+}
+
+export async function listVulnerabilitiesByScanRun(scanRunId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(vulnerabilities)
+    .where(eq(vulnerabilities.scanRunId, scanRunId));
 }
 
 export async function createVulnerability(data: InsertVulnerability) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(vulnerabilities).values(data);
+  return await db.insert(vulnerabilities).values(data);
 }
 
-export async function updateVulnerability(id: number, data: Partial<InsertVulnerability>) {
+export async function updateVulnerabilityStatus(
+  vulnerabilityId: number,
+  status: string,
+  riskPriority?: number
+) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: any = { status };
+  if (riskPriority !== undefined) {
+    updateData.riskPriority = riskPriority;
+  }
+  await db.update(vulnerabilities).set(updateData).where(eq(vulnerabilities.id, vulnerabilityId));
+}
+
+// ============ SENSITIVE DATA DETECTIONS ============
+
+export async function createSensitiveDataDetection(data: InsertSensitiveDataDetection) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(vulnerabilities).set(data).where(eq(vulnerabilities.id, id));
+  return await db.insert(sensitiveDataDetections).values(data);
 }
 
-// Conformidade
-export async function getComplianceControls() {
+export async function listSensitiveDataByProject(projectId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(complianceControls);
+  return await db
+    .select()
+    .from(sensitiveDataDetections)
+    .where(eq(sensitiveDataDetections.projectId, projectId))
+    .orderBy(desc(sensitiveDataDetections.createdAt));
 }
 
-export async function getApplicationCompliance(applicationId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(applicationCompliance).where(eq(applicationCompliance.applicationId, applicationId));
-}
+// ============ PROMPT INJECTION DETECTIONS ============
 
-export async function updateApplicationCompliance(id: number, data: Partial<InsertApplicationCompliance>) {
+export async function createPromptInjectionDetection(data: InsertPromptInjectionDetection) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(applicationCompliance).set(data).where(eq(applicationCompliance.id, id));
+  return await db.insert(promptInjectionDetections).values(data);
 }
 
-// Histórico de atividades
+export async function listPromptInjectionsByProject(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(promptInjectionDetections)
+    .where(eq(promptInjectionDetections.projectId, projectId))
+    .orderBy(desc(promptInjectionDetections.createdAt));
+}
+
+// ============ AI ANALYSES ============
+
+export async function createAiAnalysis(data: InsertAiAnalysis) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(aiAnalyses).values(data);
+}
+
+export async function listAiAnalysesByVulnerability(vulnerabilityId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select()
+    .from(aiAnalyses)
+    .where(eq(aiAnalyses.vulnerabilityId, vulnerabilityId));
+}
+
+// ============ ACTIVITY LOGS ============
+
 export async function createActivityLog(data: InsertActivityLog) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(activityLog).values(data);
+  if (!db) return;
+  await db.insert(activityLogs).values(data);
 }
 
-export async function getActivityLog(limit: number = 50) {
+export async function listActivityLogs(projectId?: number, limit = 50) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(activityLog).orderBy(activityLog.createdAt).limit(limit);
+  if (projectId) {
+    return await db
+      .select()
+      .from(activityLogs)
+      .where(eq(activityLogs.projectId, projectId))
+      .orderBy(desc(activityLogs.createdAt))
+      .limit(limit);
+  }
+  return await db.select().from(activityLogs).orderBy(desc(activityLogs.createdAt)).limit(limit);
 }
 
-// Delete operations
-export async function deleteApplication(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(applications).where(eq(applications.id, id));
-}
+// ============ DASHBOARD METRICS ============
 
-export async function deleteVulnerability(id: number) {
+export async function getDashboardMetrics(projectId: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(vulnerabilities).where(eq(vulnerabilities.id, id));
-}
+  if (!db) return null;
 
-// Dashboard metrics
-export async function getDashboardMetrics() {
-  const db = await getDb();
-  if (!db) return { totalApps: 0, vulnerabilities: { critica: 0, alta: 0, media: 0, baixa: 0 }, riskScore: 0 };
-  
-  const allVulns = await db.select().from(vulnerabilities);
-  const apps = await db.select().from(applications);
-  
-  const metrics = {
-    totalApps: apps.length,
-    vulnerabilities: {
-      critica: allVulns.filter(v => v.severity === 'crítica').length,
-      alta: allVulns.filter(v => v.severity === 'alta').length,
-      media: allVulns.filter(v => v.severity === 'média').length,
-      baixa: allVulns.filter(v => v.severity === 'baixa').length,
-    },
-    riskScore: apps.reduce((sum, app) => sum + (parseFloat(app.riskScore?.toString() || '0')), 0) / (apps.length || 1),
+  const project = await getProjectById(projectId);
+  const vulns = await listVulnerabilitiesByProject(projectId);
+  const recentScans = await listScanRunsByProject(projectId, 10);
+  const sensitiveData = await listSensitiveDataByProject(projectId);
+  const promptInjections = await listPromptInjectionsByProject(projectId);
+
+  const severityCounts = {
+    crítica: vulns.filter((v) => v.severity === "crítica").length,
+    alta: vulns.filter((v) => v.severity === "alta").length,
+    média: vulns.filter((v) => v.severity === "média").length,
+    baixa: vulns.filter((v) => v.severity === "baixa").length,
   };
-  
-  return metrics;
+
+  const statusCounts = {
+    aberta: vulns.filter((v) => v.status === "aberta").length,
+    emRemediacao: vulns.filter((v) => v.status === "em remediação").length,
+    resolvida: vulns.filter((v) => v.status === "resolvida").length,
+    falsoPositivo: vulns.filter((v) => v.status === "falso positivo").length,
+  };
+
+  return {
+    projectName: project?.name,
+    riskScore: project?.riskScore || 0,
+    totalVulnerabilities: vulns.length,
+    severityCounts,
+    statusCounts,
+    recentScans: recentScans.length,
+    sensitiveDataDetections: sensitiveData.length,
+    promptInjectionDetections: promptInjections.length,
+  };
 }
